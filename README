@@ -1,0 +1,196 @@
+# MedAI v10.1 - Universal Multimodal Diagnostic & Treatment AI System  
+**README.md**
+
+```markdown
+# MedAI v10.1 — Universal Multimodal Diagnostic & Treatment AI System
+
+**Production-Ready • Secure • Fixed-Architecture • December 10, 2025**
+
+MedAI v10.1 is a full-stack, multimodal medical AI inference platform capable of processing **clinical images, whole-slide images (WSI), tabular lab/imaging metadata, and patient data** to deliver personalized treatment recommendations with confidence scores and clinical rule overrides.
+
+Supports multiple diseases out-of-the-box with a unified API and strong security/audit controls.
+
+---
+
+### Key Features
+
+| Feature                          | Description                                                                 |
+|----------------------------------|-----------------------------------------------------------------------------|
+| Multimodal Input                 | Medical images (JPG/PNG), Whole-Slide Images (.svs, .tif), Tabular data (JSON), Patient metadata |
+| State-of-the-art Backbone        | Frozen EfficientNet-B4 (ImageNet pre-trained) + custom treatment head      |
+| WSI Support with Attention-MIL   | Efficient tile extraction + attention-based pooling (no external MIL models needed) |
+| Monte-Carlo Dropout Uncertainty  | Built-in predictive uncertainty estimation                                 |
+| Rule-Based Clinical Override     | Safe YAML-defined rules engine with restricted expression evaluation       |
+| JWT-Based Authentication         | Production-grade OAuth2 + Bearer token security                             |
+| Comprehensive Audit Logging      | All predictions + full input/output logged with request IDs                 |
+| FastAPI + Uvicorn                | High-performance async REST API                                             |
+| Model Hot-Reloading              | Drop trained models into `/models/<disease>/` — auto-loaded on startup      |
+
+---
+
+### Supported Diseases (as defined in `medai_config.yaml`)
+
+Example (configurable):
+```yaml
+diseases:
+  breast_cancer:
+    modalities: ["image", "wsi", "tabular"]
+    tabular_features: 45
+    treatments: ["Lumpectomy + RT", "Mastectomy", "Neoadjuvant Chemo", "BCS + HT", "Observation"]
+    rules_file: "rules/breast_cancer_rules.yaml"
+    cancer_threshold: 0.5
+  lung_adenocarcinoma:
+    modalities: ["image", "tabular"]
+    ...
+```
+
+Add as many diseases as needed — just update the config and drop trained models.
+
+---
+
+### Directory Structure
+
+```
+├── medai_v10_1.py              ← Main application (this file)
+├── medai_config.yaml           ← Master configuration
+├── models/
+│   └── breast_cancer/
+│       ├── image_backbone.h5   ← (optional) frozen/custom backbone
+│       ├── treatment_head.h5   ← trained multimodal head
+│       └── scaler.pkl          ← StandardScaler for tabular features
+├── rules/
+│   └── breast_cancer_rules.yaml
+├── logs/                       ← Auto-created: general + audit logs
+├── temp_*.svs                  ← Temporary WSI files (auto-deleted)
+└── requirements.txt            ← See below
+```
+
+---
+
+### Requirements (`requirements.txt`)
+
+```txt
+fastapi>=0.104.0
+uvicorn[standard]>=0.23.0
+python-multipart
+PyJWT
+PyYAML
+tensorflow>=2.15.0
+numpy
+opencv-python
+Pillow
+openslide-python
+scikit-learn
+joblib
+shap
+```
+
+Install with:
+```bash
+pip install -r requirements.txt
+# On Linux, also install OpenSlide binaries:
+# sudo apt-get install openslide-tools
+```
+
+---
+
+### Quick Start (Production Mode)
+
+1. **Place your trained models** in `models/<disease_name>/`
+2. **Edit** `medai_config.yaml` with your diseases, modalities, treatments, and JWT secret
+3. **(Optional)** Add clinical override rules in `rules/`
+4. **Run**
+
+```bash
+python medai_v10_1.py
+```
+
+Server will be available at `http://0.0.0.0:8000`
+
+OpenAPI docs: http://localhost:8000/docs
+
+---
+
+### API Endpoint
+
+**POST** `/predict`
+
+#### Authentication
+Include Bearer token in Authorization header:
+```
+Authorization: Bearer <your-jwt-token>
+```
+
+#### Form-Data Fields
+
+| Field           | Type            | Required? | Description                                      |
+|-----------------|-----------------|-----------|--------------------------------------------------|
+| `disease`       | string          | Yes       | Exact disease key from config                    |
+| `tabular_data`  | JSON string     | Yes       | Array of floats (length = tabular_features)      |
+| `metadata`      | JSON string     | No        | Patient metadata used in rules (age, stage, etc.)|
+| `image_file`    | file            | Conditional | Standard radiology image (if modality includes "image") |
+| `wsi_file`      | file            | Conditional | Whole-slide image .svs/.tif (if "wsi" modality)  |
+
+#### Example (curl)
+
+```bash
+curl -X POST "http://localhost:8000/predict" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6..." \
+  -F "disease=breast_cancer" \
+  -F "tabular_data=[0.8,1.2,45.0,...,3.1]" \
+  -F "metadata={\"age\": 56, \"her2\": true, \"stage\": \"IIB\"}" \
+  -F "image_file=@mammogram.png" \
+  -F "wsi_file=@slide_001.svs"
+```
+
+#### Successful Response
+
+```json
+{
+  "request_id": "a1b2c3d4-...",
+  "disease": "breast_cancer",
+  "recommended_treatment": "Neoadjuvant Chemo (rule override: HER2+ and node-positive)",
+  "treatment_confidence": 0.87,
+  "treatment_uncertainty": 0.042,
+  "all_treatment_probs": {
+    "Lumpectomy + RT": 0.12,
+    "Mastectomy": 0.08,
+    "Neoadjuvant Chemo": 0.87,
+    ...
+  },
+  "timestamp": "2025-12-10T18:43:21.123456"
+}
+```
+
+---
+
+### Security & Compliance Notes
+
+- All predictions are audit-logged with full input/output
+- JWT authentication enforced on every request
+- Rule engine uses extremely restricted `safe_eval` (no code execution)
+- Temporary WSI files deleted immediately after processing
+- No patient identifiers stored
+
+---
+
+### Training New Diseases
+
+1. Train/freeze an EfficientNet-B4 backbone (or reuse ImageNet)
+2. Train a treatment head on concatenated `[image_features + scaled_tabular]`
+3. Save:
+   - `treatment_head.h5`
+   - `scaler.pkl` (fitted StandardScaler)
+   - (optional) custom `image_backbone.h5`
+4. Update `medai_config.yaml` and add rules → restart
+
+---
+
+**MedAI v10.1 — Ready for clinical integration, research prototypes, or hospital AI platforms.**
+
+*Author: James Squire and hopefully you whoever you are.
+
+*December 10, 2025*
+``` 
+
+Free for everyone to use.
